@@ -1,127 +1,127 @@
+################################################################################
+#### REAL DATA – EE2.1
+#### Matrix-variate Student-t (censored), estimating nu
+################################################################################
+
+rm(list = ls(all = TRUE))
+
+## ===================== Packages =====================
 library(baytrends)
 library(dplyr)
 
+library(matrixNormal)
+library(MixMatrix)
+library(mvtnorm)
+library(MomTrunc)
+library(mnormt)
+library(Matrix)
+library(LaplacesDemon)
+
+## ===================== Load EM / ECM functions =====================
+codes_dir <- "C:/Users/carlo/Dropbox/Spatial Point Process/MeuProjeto/Artigo1_Hyperbolic/Matrix-t/MVTC-codes"
+setwd(codes_dir)
+source("Functions File -Student.R")
+
+## ===================== EM controls =====================
+precision <- 1e-5
+MaxIter   <- 40
+
+## ===================== Load raw data =====================
 data("dataCensored")
 dataOR <- unSurvDF(dataCensored)
-`%!in%` = Negate(`%in%`)
 
-stat <- unique(dataOR$station)
+`%!in%` <- Negate(`%in%`)
+
+## ===================== EE2.1 specification =====================
+stat      <- unique(dataOR$station)
+stat.sel  <- 3                      # EE2.1
+
 vars.cens <- c("chla", "din", "nh4", "no23", "po4", "tdn", "tdp", "tn", "tp")
-col.nam <- c("AP","B","BP","S")
+sel       <- c(5, 6, 7)             # po4, tdn, tdp
+p         <- length(sel)
 
-stat.sel <- 3 # select the station
-sel  <- c(5,6,7) # select the variables in vars.cens (must be sorted)
-p <- length(sel) # number of variables 
-col.sel <- c(1,2,3,4) # select the columns in col.nam (must be sorted)
-r <- length(col.sel) # number of columns
+col.nam   <- c("AP","B","BP","S")
+col.sel   <- 1:4
+r         <- length(col.sel)
 
-vars.sel <- character(length = length(sel))
-for (i in 1:length(sel)) {
-  
-  vars.sel[i] <- paste(vars.cens[sel[i]],"_lo",sep = "")
+vars.sel <- paste0(vars.cens[sel], "_lo")
 
-}
-
-#### Data extraction and arrangement ####
-
-filt1 <- filter(dataOR, station==stat[stat.sel])
+## ===================== Data extraction =====================
+filt1  <- filter(dataOR, station == stat[stat.sel])
 times1 <- unique(filt1$date)
+
+## Remove incomplete dates
 elim1 <- numeric(length(times1))
 
-for (i in 1:length(times1)) {
-  
-  temp1 <- filter(filt1, date==times1[i])
-  if(nrow(temp1)!=r)
-    elim1[i] <- 1
-  
-  temp2 <- select(temp1, vars.sel)
-  if(all(is.na(temp2))) 
-    elim1[i] <- 1
-  
+for (i in seq_along(times1)) {
+  tmp <- filter(filt1, date == times1[i])
+
+  if (nrow(tmp) != r) elim1[i] <- 1
+  if (all(is.na(select(tmp, vars.sel)))) elim1[i] <- 1
 }
 
-times1<- times1[-which(elim1==1)]
-n <- length(times1)
+times1 <- times1[elim1 == 0]
+n      <- length(times1)
 
-X.or <- array(NA, dim = c(p,r,n), dimnames = list(c(vars.cens[sel]),
-                                                   c(col.nam[col.sel]),
-                                                   c(1:n)))
-X.cens <- X.or
-cc <- LS <- array(0, dim = c(p,r,n))
+## ===================== Build arrays =====================
+X.cens <- array(NA, dim = c(p, r, n),
+                dimnames = list(vars.cens[sel], col.nam[col.sel], 1:n))
+
+cc <- array(0, dim = c(p, r, n))
+LS <- array(0, dim = c(p, r, n))
 
 for (i in 1:n) {
-  
-  temp3   <- filter(filt1, date==times1[i])
-  temp4   <- select(temp3, vars.sel)
-  
-  X.cens[,,i] <- X.or[,,i] <- t(temp4)
 
-  ## Handling Missing Values (NA) ##
-  
-  if(any(is.na(X.cens[,,i]))){
-    res0 <- which(is.na(X.cens[,,i]))
-    cc[,,i][res0] <- 1
-    LS[,,i][res0] <- +Inf
-    X.cens[,,i][res0] <- -Inf
+  tmp   <- filter(filt1, date == times1[i])
+  tmp_v <- select(tmp, vars.sel)
+
+  X.cens[,,i] <- t(tmp_v)
+
+  ## ---- Missing values ----
+  if (any(is.na(X.cens[,,i]))) {
+    idx <- which(is.na(X.cens[,,i]))
+    cc[,,i][idx] <- 1
+    LS[,,i][idx] <- +Inf
+    X.cens[,,i][idx] <- -Inf
   }
-  
-  ## Handling Censoring Values ##
-  
-  sel2 <- which(colnames(temp3) %in% vars.sel) # positions of the variables in temp3
+
+  ## ---- Censoring ----
+  sel2 <- which(colnames(tmp) %in% vars.sel)
 
   for (j in 1:p) {
-    
-    dif <- temp3[,sel2[j]]-temp3[,(sel2[j]+1)]
-    if(any(dif!=0, na.rm = T)){
-      
-      res1 <- which(dif!=0)
-      LS[j,res1,i] <- temp3[res1,(sel2[j]+1)]
-      cc[j,res1,i] <- 1
-      
+    dif <- tmp[, sel2[j]] - tmp[, sel2[j] + 1]
+    if (any(dif != 0, na.rm = TRUE)) {
+      idx <- which(dif != 0)
+      cc[j, idx, i] <- 1
+      LS[j, idx, i] <- tmp[idx, sel2[j] + 1]
     }
-    
   }
-  
 }
 
-#### Fitting Part ####
+## ===================== Quick dataset summary (optional) =====================
+cat("\n================ EE2.1 DATA SUMMARY ================\n")
+cat(sprintf("Array: %d x %d x %d\n", dim(X.cens)[1], dim(X.cens)[2], dim(X.cens)[3]))
+cat(sprintf("Censura (cc==1): %d (%.2f%%)\n",
+            sum(cc == 1), 100 * sum(cc == 1) / length(cc)))
+cat(sprintf("Valores -Inf em X.cens: %d (%.2f%%)\n",
+            sum(is.infinite(X.cens) & X.cens < 0, na.rm = TRUE),
+            100 * sum(is.infinite(X.cens) & X.cens < 0, na.rm = TRUE) / length(X.cens)))
 
-set.seed(1234)
+## ===================== Model fitting =====================
+cat("\n>>> Fitting matrix-variate Student-t with censoring (estimating nu)...\n")
 
-### Fit our model ###
+ResCt_EE <- EM.MatrixtC.cens3(
+  X.cens, cc, LS,
+  nuI       = TRUE,
+  precision = precision,
+  MaxIter   = MaxIter
+)
 
-res.cens<- EM.MatrixNC.cens3(X.cens, cc, LS, precision=1e-7, MaxIter=500)
-rest.rm<- EM.MatrixtC.cens3(X.cens, cc, LS, nuI=TRUE, precision=1e-7, MaxIter=500)
-### Fit Matrix normal after removing na/cens observations ###
-
-ck1 <- numeric(n)
-
-for (i in 1:n) {
-  
-  if(any(cc[,,i]==1)){
-    
-    ck1[i] <-1
-    
-  }
-  
-}
-
-X.rm <- X.cens[,,which(ck1!=1)]
-
-res.rm<- EM.MatrixNC2(dados = X.rm, precision=1e-7, MaxIter=500)
-
-#### Analysis of the results ####
-
-perc.change <- function(V1,V2){
-  ((V2-V1)/abs(V1))*100
-}
-
-round(res.cens$mu[,c(4,1,3,2)],digits = 3)
-round(cov2cor(res.cens$Sigma),digits = 3)
-round(cov2cor(res.cens$Psi)[c(4,1,3,2),c(4,1,3,2)],digits = 3)
-
-# perc. change 
-round(perc.change(res.cens$mu[,c(4,1,3,2)],res.rm$mu[,c(4,1,3,2)]),digits = 3)
-round(perc.change(cov2cor(res.cens$Sigma),cov2cor(res.rm$Sigma)),digits = 3) 
-round(perc.change(cov2cor(res.cens$Psi)[c(4,1,3,2),c(4,1,3,2)],cov2cor(res.rm$Psi)[c(4,1,3,2),c(4,1,3,2)]),digits = 3)
-
+## ===================== Output =====================
+cat("\n================ EE2.1 RESULTS ================\n")
+cat("\n--- Student-t (censored) ---\n")
+print(ResCt_EE$loglik)
+print(ResCt_EE$mu)
+print(ResCt_EE$Sigma)
+print(ResCt_EE$Psi)
+print(ResCt_EE$nu)
