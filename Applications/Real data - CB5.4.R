@@ -116,3 +116,6 @@ print(ResCt_CB$mu)
 print(ResCt_CB$Sigma)
 print(ResCt_CB$Psi)
 print(ResCt_CB$nu)
+
+R_TC.Psi<-cov2cor(ResCt_CB$Psi)
+R_TC.Sigma<-cov2cor(ResCt_CB$Sigma)
